@@ -3,44 +3,14 @@ import User from '../models/user.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import AppConstConfig from '../configs/AppConstConfig.js';
+import { authenticateUser } from '../middleware/authenticateUser.js';
 
 
 const router = express.Router()
 
 // ROUTE:1 Create a user using POST : /api/auth/createuser 
 router.post('/register',async (req,res)=>{
-        // try {
-        //     // use let here or otherwise you wont be able to asign new user
-        //     let user = await User.findOne({email:req.body.email})
-
-        //     if(user){
-        //         return res.status(400).send({status:AppConstConfig.APP_DEFAULT_INVALID_RESPONSE,error:AppConstConfig.APP_USER_NOT_VALID_MESSAGE})
-        //     }
-        //     // Using bcryptjs to generate salt and hash for password
-
-        //     const salt = await bcrypt.genSalt(10);
-        //     console.log(salt,'salt')
-        //     const secretPass = await bcrypt.hash(req.body.password,12); 
-        //     console.log(secretPass,'secretPass')
-        //     // Method:2
-        //         const newUser = await User.create({
-        //             name:req.body.name,
-        //             email:req.body.email,
-        //             password:secretPass,
-        //         })
-
-        //         console.log('user after created',newUser)
-        //         // Creating an authentication token
-
-        //         const authtoken = jwt.sign({id:user._id},process.env.JWT_SECRET)
-        //         console.log({...newUser,'authtoken':authtoken,'message':'Registered Successfully','status':1})
-
-        //         res.status(201).json({...newUser,authtoken:authtoken,message:'Registered Successfully',status:1})
-
-        // } catch (error) {
-        //     res.status(400).json({message:'Internal error occured',status:-1,error:error})
-        // }
-        const {email,password,name} = req.body
+        const {email,password,name,role} = req.body
 
     try {
         const existingUser = await User.findOne({email:email})
@@ -52,10 +22,11 @@ router.post('/register',async (req,res)=>{
         const newUser = await User.create({
             email:email,
             password:hashPassword,
-            name:name
+            name:name,
+            role:role
         })
 
-        const authtoken = jwt.sign({id:newUser._id},process.env.JWT_SECRET)
+        const authtoken = jwt.sign({id:newUser._id,role:newUser.role},process.env.JWT_SECRET)
 
         res.status(200).json({...newUser._doc, authtoken:authtoken, message:'Registered Successfully', status:1})
     } catch (error) {
@@ -73,7 +44,7 @@ router.post('/', async(req,res)=>{
 
             const isValidPassword = await bcrypt.compare(req.body.password,user.password)
             if(isValidPassword){
-                const authtoken = jwt.sign({id:user._id},process.env.JWT_SECRET)
+                const authtoken = jwt.sign({id:user._id,role:user.role},process.env.JWT_SECRET)
                 const {password,...others} = user._doc;
                 res.status(201).send({...others,authtoken:authtoken,message:'Signed In Successfully',status:1})
             }
@@ -81,10 +52,42 @@ router.post('/', async(req,res)=>{
                 return res.status(400).send({status:-1,error:"Please enter the correct credentials"})
             }
         } catch (error) {
-            console.log(error)
             res.status(400).json({message:'Internal error occured',status:-1,error:error})
         }
     })
+
+// ROUTE:3 GETTING THE TABLE OF THE NOTES USING api/users/table
+router.post('/table',authenticateUser, async(req,res)=>{
+    let sortBy, sortOrder;
+    req.body.sortOrder === "asc" ? sortOrder = 1 : sortOrder = -1
+    if(req.body.sortBy === "col1"){
+        sortBy = {name:sortOrder}
+    }else if(req.body.sortBy === "col2"){
+        sortBy = {email:sortOrder}
+    }
+
+    let skipVal = (req.body.page && req.body.page > 0) ? (req.body.page - 1)*(req.body.length) : 0
+    let searchStr = (req.body.searchStr && req.body.searchStr!=="") ? req.body.searchStr : ""
+    let length = req.body.length
+        try {
+            let users = await User.find({"$or":[{"name":{$regex:searchStr}}, {"email":{$regex:searchStr}}, {"role":{$regex:searchStr}}]},{"name":1, "role":1, "email":1, "date":1})
+                .sort(sortBy)
+                .limit(length)
+                .skip(skipVal)
+
+            var usersCount = 0;
+            if(searchStr && searchStr!==""){
+                usersCount = await User.find({"$or":[{"name":{$regex:searchStr}},{"email":{$regex:searchStr}},{"role":{$regex:searchStr}}]}).count()
+            }
+            else{
+                usersCount = await User.find().count()
+            }
+
+            res.status(201).json({data:users,recordsFiltered:usersCount,status:1})
+        } catch (error) {
+            res.status(400).json('Internal server error')
+        }
+})
 
 
 export default router 
